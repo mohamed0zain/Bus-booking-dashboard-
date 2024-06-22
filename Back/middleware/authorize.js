@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const util = require("util"); //helper
 const connection= require('../db/connection')
+
 const authoried =async (req,res,next)=>{
     const query = util.promisify(connection.query).bind(connection); 
     const {token} = req.headers;

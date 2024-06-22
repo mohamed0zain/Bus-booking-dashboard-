@@ -1,109 +1,108 @@
-const { v4 } = require('uuid');
-const express = require('express')
-const router = express.Router()
-const adminAuth =require('../middleware/admin')
-const connection= require('../db/connection')
-const util = require("util"); //helper
+const express = require("express");
+const router = express.Router();
+const adminAuth = require('../middleware/admin');
+const connection = require("../db/connection");
+const util = require("util");
 const { body, validationResult } = require("express-validator");
 const crypto = require("crypto");
 const bcrypt = require("bcrypt");
 
- 
-
-// API requests
-// get request --> retrive data from server
-// post request --> saving data
-// put request --> updata data
-// delete --> delete data from server
-
-//get request--> get all travellers
-router.get("/", adminAuth ,(req, res)=> {
-    connection.query("select * from user ",(err,results,fields)=>{
-        res.json(results);
-    });
-});
-//post request --> create  User
-router.post("/",
-body("email").isEmail().withMessage("enter valid email"),
-body("password")  
-  .isLength({ min: 5, max: 12 })
-  .withMessage("password should be between (5,12)character"),
-body("phone")
-  .isLength({ min: 11, max: 11 })
-  .withMessage("This phone number isn't valid"),adminAuth,async(req,res)=>{
-    try{
-        const data = req.body;
-        const query = util.promisify(connection.query).bind(connection); //query to promise to use await and async
-        const checkEmailExist = await query(
-          "select * from user where email = ?",
-          [req.body.email]
-        );
-        if (checkEmailExist.length > 0) {
-          return res.status(400).json({ message: "Email already exists" });
-        }
-      await query("insert into user set ? ",{ email:data.email ,phone: data.phone, status:"inactive", type:"traveler" ,password : await bcrypt.hash(req.body.password, 10), token: crypto.randomBytes(16).toString("hex"), })
-      res.status(200).json({message:"Traveler created"})
-    }catch(err){
-        console.error(err);
-      res.status(500).json({ error: "Internal Server Error" });
-    }
-   
-   
-});
-// get spasific user
-router.get("/:email", async (req, res)=> {
-    const {email} = req.params;
- await  connection.query("select * from user where email = ?",email,(err,results,fields)=>{
-    if (results[0] ) {
-        res.status(200).json(results[0]);
-
+// GET all travelers (admin only)
+router.get("/", adminAuth, (req, res) => {
+  connection.query("SELECT * FROM user", (err, results) => {
+    if (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to fetch travelers" });
     } else {
-
-        res.statusCode=404;
-        res.send([{
-            "message":"no Users found"
-       
-        }]);    }
-   } );
-
+      res.json(results);
+    }
   });
+});
 
-//pUT request --> UPDATE User
-router.put("/:email",
-body("email").isEmail().withMessage("enter valid email"),
-body("password")  
-  .isLength({ min: 5, max: 12 })
-  .withMessage("password should be between (5,12)character"),
-body("phone")
-  .isLength({ min: 11, max: 11 })
-  .withMessage("This phone number isn't valid"),adminAuth,async (req, res) => {
-  try{
-      const { email } = req.params;
-    const { phone, password } = req.body;
-    const encPassword = await bcrypt.hash(req.body.password, 10);
-   const query = util.promisify(connection.query).bind(connection);
-  await query("UPDATE user SET phone = ?, password = ? WHERE email = ?",[phone, encPassword,email])
-    res.status(200).json({msg:"user updated successfully"})
-  }catch(err){
+// POST request to create traveler (admin only)
+router.post("/", adminAuth, [
+  body("email").isEmail().withMessage("Enter valid email"),
+  body("password").isLength({ min: 5, max: 12 }).withMessage("Password should be between 5-12 characters"),
+  body("phone").isLength({ min: 11, max: 11 }).withMessage("Enter a valid 11-digit phone number")
+], async (req, res) => {
+  try {
+    const data = req.body;
+    const query = util.promisify(connection.query).bind(connection);
+
+    const checkEmailExist = await query("SELECT * FROM user WHERE email = ?", [req.body.email]);
+    if (checkEmailExist.length > 0) {
+      return res.status(400).json({ message: "Email already exists" });
+    }
+
+    const traveler = {
+      email: data.email,
+      password: await bcrypt.hash(req.body.password, 10),
+      phone: data.phone,
+      type: "traveler",
+      status: "inactive",
+      token: crypto.randomBytes(16).toString("hex")
+    };
+
+    await query("INSERT INTO user SET ?", [traveler]);
+    delete traveler.password;
+    res.status(200).json(traveler);
+  } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
-//delete request --> remove spasific User
-router.delete("/:email",(req,res)=>{
-    const {email} = req.params;
-   connection.query("delete from user where email = ?",email,(err,results)=>{
+
+// GET specific traveler by email
+router.get("/:email", async (req, res) => {
+  const { email } = req.params;
+  connection.query("SELECT * FROM user WHERE email = ?", email, (err, results) => {
     if (err) {
-        res.statusCode=500;
-        res.json({
-            "message":"field to delete"
-        })
+      console.error(err);
+      res.status(500).json({ message: "Failed to fetch traveler" });
     } else {
-        res.json({
-            "message":"User deleted"
-        })
+      if (results[0]) {
+        res.status(200).json(results[0]);
+      } else {
+        res.status(404).json({ message: "No user found" });
+      }
     }
-   })
+  });
+});
+
+// PUT request to update traveler by email (admin only)
+router.put("/:email", adminAuth, [
+  body("email").isEmail().withMessage("Enter valid email"),
+  body("password").isLength({ min: 5, max: 12 }).withMessage("Password should be between 5-12 characters"),
+  body("phone").isLength({ min: 11, max: 11 }).withMessage("Enter a valid 11-digit phone number")
+], async (req, res) => {
+  try {
+    const { email } = req.params;
+    const { password, phone } = req.body;
+    const query = util.promisify(connection.query).bind(connection);
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    await query("UPDATE user SET password = ?, phone = ? WHERE email = ?", [hashedPassword, phone, email]);
+    
+    res.status(200).json({ message: "Traveler updated successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+// DELETE request to delete traveler by email (admin only)
+router.delete("/:email", adminAuth, async (req, res) => {
+  try {
+    const { email } = req.params;
+    const query = util.promisify(connection.query).bind(connection);
+    
+    await query("DELETE FROM user WHERE email = ?", [email]);
+    
+    res.status(200).json({ message: "Traveler deleted successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
 });
 
 module.exports = router;
